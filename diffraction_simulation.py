@@ -109,22 +109,13 @@ A0 = 1
 src = A0*aperture(poly_n_side=6, geometry='circ_aperture', text_to_draw='Envisics', text_font_size=100)
 
 z = 10*cm   # Distance of propagation
-
 frsnl_number = (aperture_radius*dx)**2/(lbd*z)
 
-# h1 = np.exp( 1j*k0/(2*z)* (X**2 + Y**2) )
-
-# h1 = np.exp(1j*k0*z)*((1j*lbd*z)**-1 ) * np.exp( 1j*k0/(2*z) *( kX**2  + kY**2))
 ft_src = ft( src ) 
-
 H = np.exp(1j*k0 * z) * ((1j*lbd*z)**-1) * np.exp(1j *k0 * z * (X**2+ Y**2) )
 
 result = ift(np.multiply( ft_src, H ) )
 
-# hxy = np.exp(1j*k0*z)* ((1j*lbd*z)**-1 ) * np.exp( 1j*k0/(2*z) *( X**2  + Y**2))
-
-
-# TODO 
 
 
 
