@@ -312,7 +312,7 @@ class DiffractionSolver(object):
             draw.regular_polygon(bounding_circle=poly_bound_circle, n_sides=poly_n_side,\
                                  rotation=poly_rotation, outline='white', fill='white')
     
-        if geometry == 'text':
+        if geometry == 'text_aperture':
             font = ImageFont.truetype(coop_black, size=text_font_size)
             draw = ImageDraw.Draw(img)
             draw.multiline_text([x_r-200 , y_r-50], text=text_to_draw, fill='white', font=font)
@@ -335,7 +335,7 @@ class DiffractionSolver(object):
         pass
 
     
-    def fresnel_integration(self, aperture_field, z=None):
+    def angular_spectrum(self, aperture_field, z=None):
         '''
         This function calculates the fresnel integral of the field at a certain distance z
         The calculation is done as follows. 
@@ -362,22 +362,24 @@ class DiffractionSolver(object):
         diff_pattern = self.ift(np.multiply( ft_aperture_field, fresnel_kernel ) )          # Inverse fourier transform
         return diff_pattern
     
-    def angular_spectrum(self):
-        '''
-        TODO
-        '''
-        pass
     
     def direct_integration(self):
         '''
         TODO
         '''
         pass
+    
+    def fraunhoffer(self):
+        '''
+        TODO
+        '''
+        pass
+        
 
 if __name__ == "__main__":
-    solver = DiffractionSolver(lbd=650*nm, pixel_size_x=20*um, pixel_size_y=20*um, z=10*cm)
-    field_at_aperture = solver.aperture_source(a=1000, b=1000, geometry='circ_aperture', poly_rotation=55,\
-                                               poly_n_side=7, text_to_draw='Envisics', text_font_size=250  )
-    diff_pattern = solver.fresnel_integration(aperture_field=field_at_aperture)
+    solver = DiffractionSolver(lbd=650*nm, pixel_size_x=20*um, pixel_size_y=20*um, z=5*cm)
+    field_at_aperture = solver.aperture_source(a=500, b=200, geometry='regular_polygon', poly_rotation=55,\
+                                               poly_n_side=7, text_to_draw='Test', text_font_size=250  )
+    diff_pattern = solver.angular_spectrum(aperture_field=field_at_aperture)
     plt.imshow(solver.intensity(diff_pattern))
     plt.show()
