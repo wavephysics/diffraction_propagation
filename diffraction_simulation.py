@@ -8,8 +8,10 @@ Created on Mon Nov  8 09:57:30 2021
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
+from scipy.ndimage import convolve
 from scipy.fftpack import fft2, ifft2, fftshift, fftfreq
 from scipy.special import comb, factorial
+from scipy.signal import convolve2d
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -18,6 +20,7 @@ coop_black = 'COOPBL.TTF'
 
 
 # DEFINE THE UNITS
+
 
 mm = 1e-3           # Dimensions
 cm = mm*1e1         
@@ -46,7 +49,7 @@ class DiffractionSolver(object):
     the position of the aperture is z0 = 0. The third category of functions is the solver category.
 
     '''
-    def __init__(self, p=None, Lx=None, Ly=None, lbd=None, pixel_size_x=None, pixel_size_y=None, z=None, zstep=None):
+    def __init__(self, p=None, Lx=None, Ly=None, lbd=None, pixel_size_x=None, pixel_size_y=None, z=None, zstep=None, prop_method=None):
         
         ''' 
         The following funtion enables to define the physical
@@ -96,7 +99,7 @@ class DiffractionSolver(object):
         else:
             self.zstep = zstep
                 
-        self.k0 = 2*np.pi/self.lbd            # Wavenumber of the light beam along z-axis
+        self.k0 = (2*np.pi)*(self.lbd)**-1            # Wavenumber of the light beam along z-axis
         self.nx = 2**self.p                   # Number of grid points along x-axis
         self.ny = 2**self.p                   # Number of grid points along y-axis
         self.Mx = self.nx + 1
@@ -104,6 +107,7 @@ class DiffractionSolver(object):
         self.xn = np.linspace(-int(self.Mx/2) , int(self.Mx/2), self.Mx)               # Define vector of points along x-axis
         self.yn = np.linspace(-int(self.My/2) , int(self.My/2), self.My)               # Define vector of points along y-axis
         self.dz = self.z/self.zstep
+        # self.aperture_radius = 0
         
         
         # The value Lx, Ly, pixel_size_x and pixel_size_y may go into a conflict
@@ -157,16 +161,21 @@ class DiffractionSolver(object):
         # There is another way to define the Fourier space variables, namely,
         # kx and ky. dkx = pi/Lx and dky = pi/Ly
         
-        self.dkx = np.pi/self.Lx                      # Calculates the pixel size in the fourier space x-axis
-        self.dky = np.pi/self.Ly                      # Calculates the pixel size in the fourier space y-axis
+        self.dkx = np.pi/(self.Lx)                      # Calculates the pixel size in the fourier space x-axis
+        self.dky = np.pi/(self.Ly)                      # Calculates the pixel size in the fourier space y-axis
         
-        # kx = np.linspace(-(dkx / 2 ) * M, dkx / 2 * M, M)
-        # ky = np.linspace(-(dky / 2 ) * M, dky / 2 * M, M)
+        self.kx = np.linspace(-(self.dkx / 2 ) * self.Mx, self.dkx / 2 * self.Mx, self.Mx)
+        self.ky = np.linspace(-(self.dky / 2 ) * self.My, self.dky / 2 * self.My, self.My)
         
-        self.kx = np.fft.fftfreq(self.Mx, d=pixel_size_x)              # Predfined function to calculate the spatial frequency along x
-        self.ky = np.fft.fftfreq(self.My, d=pixel_size_y)              # Predfined function to calculate the spatial frequency along y
+        # self.kx = np.fft.fftfreq(self.Mx, d=self.dx)              # Predfined function to calculate the spatial frequency along x
+        # self.ky = np.fft.fftfreq(self.My, d=self.dy)              # Predfined function to calculate the spatial frequency along y
         self.kx.sort(); self.ky.sort()                                # Sorts the spatial frequency domain
         self.kX, self.kY = np.meshgrid(self.kx, self.ky)              # Grid 
+        
+        if prop_method == None:
+            self.prop_method = 'frsnl_frnhfer'
+        else:
+            self.prop_method =  prop_method
         
         print('\n')
         print('\n')
@@ -177,7 +186,7 @@ class DiffractionSolver(object):
         print('|                         Parameter                             |               Value             |')
         print('|-------------------------------------------------------------------------------------------------|')
         # print('\n ')
-        print('| Number of grid points along x and y                           |                   ', (self.Mx, self.My),'|')
+        print('| Number of grid points along x and y                           |                     ', (self.Mx, self.My),'|')
         print('|-------------------------------------------------------------------------------------------------|')
         print('| Wavelength                                                    |                 ', self.lbd,'in (m) |')
         print('|-------------------------------------------------------------------------------------------------|')
@@ -191,9 +200,9 @@ class DiffractionSolver(object):
         print('|-------------------------------------------------------------------------------------------------|')
         print('| Physical dimension of the system along y                      |    ', self.Lx, 'in (m) |')
         print('|-------------------------------------------------------------------------------------------------|')
-        print('| Pixel size along kx-axis  (Fourier space)                     |     ', self.dkx,'in (m-1) |')
+        print('| Pixel size along kx-axis  (Fourier space)                     |    ', self.dkx,'in (m-1) |')
         print('|-------------------------------------------------------------------------------------------------|')
-        print('| Pixel size along ky-axis  (Fourier space)                     |     ', self.dky,'in (m-1) |')
+        print('| Pixel size along ky-axis  (Fourier space)                     |    ', self.dky,'in (m-1) |')
         print('|-------------------------------------------------------------------------------------------------|')
         print('| Distance of propagation                                       |                     ', self.z,'in (m) |')
         print('|-------------------------------------------------------------------------------------------------|')
@@ -248,7 +257,19 @@ class DiffractionSolver(object):
             Fourier transform of the field matrix of shape (Mx, My)
         '''
         return ifft2(field)
-        
+    
+    def fft_convolve(self, field1, field2):
+        '''
+        The following function performs the convolution of two 2D functions using the
+        Fourier transform. One of the fastest way to achieve convolution is to use the FFT
+        '''
+        ft_field1 = self.ft(field1)
+        ft_field2 = self.ft(field2)
+        m,n = ft_field1.shape
+        cc = np.real(  self.ift( ft_field1*ft_field2 )   )
+        cc = np.roll(cc, -m/2+1,axis=0)
+        cc = np.roll(cc, -n/2+1,axis=1)
+        return cc
         
     def aperture_source(self, a=300, b=300, poly_bound_circle=[None, None, 200], poly_n_side=3,\
                         poly_rotation=0, x_r=None, y_r=None, geometry='circ_aperture',\
@@ -301,25 +322,30 @@ class DiffractionSolver(object):
             draw = ImageDraw.Draw(img)
             draw.ellipse( [ (x_r - int(a/2), y_r - int(b/2)), (x_r + int(a/2), y_r + int(b/2)) ],\
                          outline='white', fill='white' )
+            aperture_diameter = np.min(( a, b ))
 
         if geometry == 'rect_aperture':
             draw = ImageDraw.Draw(img)
             draw.rectangle([ (x_r - int(a/2), y_r - int(b/2)), (x_r + int(a/2), y_r + int(b/2)) ],\
                            outline='white', fill='white')
+            aperture_diameter = np.min(( a, b ))
             
         if geometry == 'regular_polygon':
             draw = ImageDraw.Draw(img)
             draw.regular_polygon(bounding_circle=poly_bound_circle, n_sides=poly_n_side,\
                                  rotation=poly_rotation, outline='white', fill='white')
+            aperture_diameter = np.min(( poly_bound_circle[2] ))
     
         if geometry == 'text_aperture':
             font = ImageFont.truetype(coop_black, size=text_font_size)
             draw = ImageDraw.Draw(img)
-            draw.multiline_text([x_r-200 , y_r-50], text=text_to_draw, fill='white', font=font)
+            draw.multiline_text([x_r-130 , y_r-50], text=text_to_draw, fill='white', font=font)
+            apaperture_diameter = text_font_size
         
         converted_data = np.array( img, dtype='int')
+        # aperture_radius = aperture_radius
 
-        return converted_data
+        return converted_data, aperture_diameter
 
 
     def wave_source(self):
@@ -335,7 +361,7 @@ class DiffractionSolver(object):
         pass
 
     
-    def angular_spectrum(self, aperture_field, z=None):
+    def angular_spectrum_frsnl(self, aperture_field, z=None):
         '''
         This function calculates the fresnel integral of the field at a certain distance z
         The calculation is done as follows. 
@@ -358,28 +384,135 @@ class DiffractionSolver(object):
         
         ft_aperture_field = self.ft(aperture_field)                                         # Calculate the FT of the aperture field
         fresnel_kernel = np.exp(1j*self.k0 * z) * ((1j*self.lbd*z)**-1)\
-                        * np.exp(1j *self.k0 * z * (self.X**2+ self.Y**2) )                 # Define Fresnel propagator
+                        * np.exp(1j * z * (self.kX**2/self.k0  + self.kY**2/self.k0 ) )                 # Define Fresnel propagator
         diff_pattern = self.ift(np.multiply( ft_aperture_field, fresnel_kernel ) )          # Inverse fourier transform
         return diff_pattern
     
+    def angular_spectrum_frhffer(self, aperture_field, z=None):
+        '''
+        This function calculates the Fraunhoffer integral of the field at a certain distance z
+        The calculation is done as follows. 
+        
+        first, we Fourier transform the field at the position z0 (aperture).
+        thereafter, we calculate Fresnel integral, by multiplying Fresnel kernel 
+        (Fresnel propagator) by the FT(aperture_field).
+        Finally, we return the field calculated at the position z.
+        
+        Input:
+            aperture_field : the field at the aperture (z0=0)
+            z : distance of propagation
+        
+        Output:
+            diff_pattern : the diffraction pattern.
+        '''
+        
+        if z == None:
+            z = self.z
+        
+        ft_aperture_field = self.ft(aperture_field)
+        fraunhoffer_kernel = np.exp(1j*self.k0 * z) * ((1j*self.lbd*z)**-1)\
+                            * np.exp(1j * z * (self.kX**2/self.k0 + self.kY**2/self.k0 ) )
+        
+        diff_pattern = np.multiply( ft_aperture_field, fraunhoffer_kernel ) 
+        return diff_pattern
     
-    def direct_integration(self):
+    
+    def direct_integration_rayleigh_sommerfield(self, aperture_field=None, z=None):
         '''
         TODO
+        
+        This function is not yet finished. I need to implement convolution without using the FF
+        
         '''
-        pass
+        
+        if z == None:
+            z = self.z
+        
+        field_evolution = np.zeros( ( self.Mx, self.My ) )
+        if aperture_field.any() == None:
+            aperture_field = self.aperture_source()[0]
+
+        
+        r = np.sqrt(self.X**2 + self.Y**2 + self.z**2)
+
+        RS_kernel = (1/2*np.pi) * (z/r) * ( (1/r)**2 - 1j*self.k0/r )  * np.exp(1j*self.k0*r)
+        
+        diff_pattern = fftshift( self.ift(np.multiply(self.ft(RS_kernel), self.ft(aperture_field))) )
+        
+        
+        # diff_pattern = sp.signal.convolve2d(aperture_field, RS_kernel, mode='valid')
+                        
+        # for ix in range(0,self.Mx):
+        #     for iy in range(0,self.My):
+        #         ri = np.sqrt(ix**2 + iy**2 + self.z**2)
+        #         # print(aperture_field[ix,iy])
+        #         field_evolution[ix, iy] = np.sum( np.sum(  aperture_field[ix,iy]*\
+        #                                 (2*np.pi)**(-1) *np.exp(1j*self.k0*ri) *((ri)**-2) \
+        #                                 * self.z * (ri**(-1) - 1j*self.k0)  ) )
+        return diff_pattern
     
-    def fraunhoffer(self):
+    
+    def angular_spectrum_rayleigh_sommerfield(self, aperture_field, z=None):
         '''
-        TODO
+        This function calculates the diffraction of the field at a certain distance z
+        The calculation is done using the Rayleigh-Sommerfeld formula and the Angular 
+        spectrum method. for more details
+        please refer to the article below:
+        
+        https://www.osapublishing.org/ao/abstract.cfm?uri=ao-45-6-1102
+        
+        first, we Fourier transform the field at the position z0 (aperture).
+        thereafter, we calculate Rayleigh-Sommerfeld diffraction integral
+        (RS propagator) by the FT(aperture_field).
+        Finally, We calculate the inverse Fourier transform.
+        
+        Input:
+            aperture_field : the field at the aperture (z0=0)
+            z : distance of propagation
+        
+        Output:
+            diff_pattern : the diffraction pattern.
+            
+        N.B. For the Rayleigh diffraction formula, there is no need to specify
+        two expression for the field (Fresnel, Fraunhoffer)
+        
         '''
-        pass
+        
+        if z == None:
+            z = self.z
+        
+        ft_aperture_field = self.ft(aperture_field)
+        RS_kernel =  ((1j*self.lbd*z)**-1)*np.exp( 1j*np.sqrt(  self.k0**2 - self.kX**2 - self.kY**2)*self.z )
+        diff_pattern = self.ift( np.multiply(ft_aperture_field, RS_kernel) )
+        return diff_pattern
+    
+
+    
         
 
 if __name__ == "__main__":
-    solver = DiffractionSolver(lbd=650*nm, pixel_size_x=20*um, pixel_size_y=20*um, z=5*cm)
-    field_at_aperture = solver.aperture_source(a=500, b=200, geometry='regular_polygon', poly_rotation=55,\
-                                               poly_n_side=7, text_to_draw='Test', text_font_size=250  )
-    diff_pattern = solver.angular_spectrum(aperture_field=field_at_aperture)
+    solver = DiffractionSolver(p=10, lbd=650*nm, pixel_size_x=40*um, pixel_size_y=40*um, z= 5, prop_method='DI')
+    field_at_aperture, aperture_size = solver.aperture_source(a=60, b=60, geometry='regular_polygon', poly_rotation=55,\
+                                               poly_n_side=3, text_to_draw='A Test text', text_font_size=50 , poly_bound_circle=[None, None, 100] )
+    
+    
+    ### Using the angular spectrum method on the Fresnel Fraunhoffer expressions
+    if solver.prop_method == 'frsnl_frnhfer':
+        if (aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1 >= 1:    
+            diff_pattern = solver.angular_spectrum_frsnl(aperture_field=field_at_aperture)
+        else:
+            diff_pattern = solver.angular_spectrum_frsnl(aperture_field=field_at_aperture)
+        print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx )
+    
+    ### Using the angular spectrum method on the Rayleigh-Sommerfeld expressions
+    elif solver.prop_method == 'RS':
+        diff_pattern = solver.angular_spectrum_rayleigh_sommerfield(aperture_field=field_at_aperture)
+        print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx )
+            
+    ### Using the Direct Integration method on the Rayleigh-Sommerfeld expression
+    elif solver.prop_method == 'DI':
+        diff_pattern = solver.direct_integration_rayleigh_sommerfield(aperture_field=field_at_aperture)
+        print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx)
+
     plt.imshow(solver.intensity(diff_pattern))
     plt.show()
