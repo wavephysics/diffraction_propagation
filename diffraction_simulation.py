@@ -8,10 +8,11 @@ Created on Mon Nov  8 09:57:30 2021
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
+from numba import njit
 from scipy.ndimage import convolve
 from scipy.fftpack import fft2, ifft2, fftshift, fftfreq
 from scipy.special import comb, factorial
-from scipy.signal import convolve2d
+from scipy.signal import convolve2d, convolve
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -262,6 +263,15 @@ class DiffractionSolver(object):
         '''
         The following function performs the convolution of two 2D functions using the
         Fourier transform. One of the fastest way to achieve convolution is to use the FFT
+        
+        
+        Input:
+            
+            2 Fields matrix of shape (Mx, My)
+        
+        Output 
+            Convolution product of the two matrices
+        
         '''
         ft_field1 = self.ft(field1)
         ft_field2 = self.ft(field2)
@@ -270,6 +280,61 @@ class DiffractionSolver(object):
         cc = np.roll(cc, -m/2+1,axis=0)
         cc = np.roll(cc, -n/2+1,axis=1)
         return cc
+    
+
+    def convolve(self, field1, field2, padding=0, strides=1):
+        '''
+        The following function enables to calculate the convolution product of two matrices
+        of diffrerent sizes. Unlike the previous function, the convolution will be done wihtout
+        using the fourier transform. This normally should take more time in calculation.
+        
+        Input:
+            
+            - 2 fields matrix of shape (Mx, My). However, they could have different shapes
+            - Padding Integer refering to if we would like to pad the image before the convolution
+            - Stride integer refering to the step of the convolution in case the kernel (field 2) has not
+            the same shape of the field 1
+            
+        Output:
+            
+            Conv_product matrix of shape ....
+        '''
+        
+        field2 = np.flipud( np.fliplr( field2 ) )
+        
+        x_shape_field2 = field2.shape[0]                                #               
+        y_shape_field2 = field2.shape[1]                                #  Shapes of the field
+        
+        x_shape_field1 = field1.shape[0]                                #
+        y_shape_field1 = field1.shape[1]                                #
+        
+        x_shape_output = int(((x_shape_field1 - x_shape_field2 + 2 * padding) / strides) + 1)
+        y_shape_output = int(((y_shape_field1 - y_shape_field2 + 2 * padding) / strides) + 1)
+        
+        conv_product = np.zeros((x_shape_output, y_shape_output))
+        
+        if padding != 0:
+            padded_field = np.zeros(( x_shape_field1 + padding**2,  y_shape_field1 + padding**2))
+            padded_field[int(padding):int(-1 * padding), int(padding):int(-1 * padding)] = image
+            print(imagePadded)
+        else:
+            padded_field = field1
+        
+        for j in range( y_shape_field1 ):
+            if j > y_shape_output - y_shape_field2:
+                break
+            if jj % strides == 0:
+                for ii in range( x_shape_field1 ):
+                    if ii > x_shape_field1 - x_shape_field2:
+                        break
+                    try:
+                        if ii % strides == 0 :
+                            conv_product[ii,jj] = (field2 * padded_field[ii: ii + x_shape_field2, jj: jj + y_shape_field2]).sum()
+                    except:
+                        break
+        return conv_product
+
+
         
     def aperture_source(self, a=300, b=300, poly_bound_circle=[None, None, 200], poly_n_side=3,\
                         poly_rotation=0, x_r=None, y_r=None, geometry='circ_aperture',\
@@ -417,11 +482,13 @@ class DiffractionSolver(object):
         return diff_pattern
     
     
-    def direct_integration_rayleigh_sommerfield(self, aperture_field=None, z=None):
+    def direct_integration_rayleigh_sommerfield_with_FT(self, aperture_field=None, z=None):
         '''
         TODO
         
-        This function is not yet finished. I need to implement convolution without using the FF
+        This function is not yet finished. I need to implement convolution without using the FT.
+        Moreover there is a gratings effect created on the fourier transform of the RS-kernel.
+        I doubt it comes from the definition of X and Y vectors.
         
         '''
         
@@ -435,21 +502,49 @@ class DiffractionSolver(object):
         
         r = np.sqrt(self.X**2 + self.Y**2 + self.z**2)
 
-        RS_kernel = (1/2*np.pi) * (z/r) * ( (1/r)**2 - 1j*self.k0/r )  * np.exp(1j*self.k0*r)
+        RS_kernel = np.pad( (1/2*np.pi) * (z/r) * ( (1/r)**2 - 1j*self.k0/r)  * np.exp(1j*self.k0*r),0) 
         
-        diff_pattern = fftshift( self.ift(np.multiply(self.ft(RS_kernel), self.ft(aperture_field))) )
+        diff_pattern = fftshift( self.ift(     fftshift(self.ft(RS_kernel))*   self.ft(aperture_field)     )  )
         
-        
-        # diff_pattern = sp.signal.convolve2d(aperture_field, RS_kernel, mode='valid')
-                        
-        # for ix in range(0,self.Mx):
-        #     for iy in range(0,self.My):
-        #         ri = np.sqrt(ix**2 + iy**2 + self.z**2)
-        #         # print(aperture_field[ix,iy])
-        #         field_evolution[ix, iy] = np.sum( np.sum(  aperture_field[ix,iy]*\
-        #                                 (2*np.pi)**(-1) *np.exp(1j*self.k0*ri) *((ri)**-2) \
-        #                                 * self.z * (ri**(-1) - 1j*self.k0)  ) )
         return diff_pattern
+    
+    
+    def direct_integration_rayleigh_sommerfield(self, aperture_field=None, z=None):
+        # '''
+        # TODO
+        
+        # This function is not yet finished. I need to implement convolution without using the FFT
+        
+        # '''
+        
+        # if z == None:
+        #     z = self.z
+
+        # if aperture_field.any() == None:
+        #     aperture_field = self.aperture_source()[0]
+            
+        # diff_pattern = np.zeros((self.Mx, self.My))
+        # r = np.sqrt(self.X**2 + self.Y**2 + self.z**2)
+
+        # RS_kernel = (1/2*np.pi) * (z/r) * ( (1/r)**2 - 1j*self.k0/r )  * np.exp(1j*self.k0*r)
+        
+        # # diff_pattern = convolve(aperture_field[512,:], RS_kernel[512,:])
+        
+        # for i in range(aperture_field.shape[0]):
+        #     diff_pattern[i,:] =  convolve(RS_kernel[:,i], aperture_field[i,:], mode='same')
+        #     # diff_pattern[i,:] = convolve(aperture_field[i,:], RS_kernel[i,:])
+            
+        
+        # # for ix in range(0,self.Mx):
+        # #     for iy in range(0,self.My):
+        # #         ri = np.sqrt(ix**2 + iy**2 + self.z**2)
+        # #         # print(aperture_field[ix,iy])
+        # #         diff_pattern[ix, iy] = np.sum( np.sum(  aperture_field*\
+        # #                                 (2*np.pi)**(-1) *np.exp(1j*self.k0*ri) *((ri)**-2) \
+        # #                                 * self.z * (ri**(-1) - 1j*self.k0)  ) )
+        # return diff_pattern
+        pass
+        
     
     
     def angular_spectrum_rayleigh_sommerfield(self, aperture_field, z=None):
@@ -487,12 +582,19 @@ class DiffractionSolver(object):
         return diff_pattern
     
 
+    def Kirchoff_diffraction(self, aperture_field, z=None):
+        '''
+        This function implements the calculation of light diffraction using Kirchoff 
+        diffraction forumula
+        
+        '''
+        pass
     
         
 
 if __name__ == "__main__":
-    solver = DiffractionSolver(p=10, lbd=650*nm, pixel_size_x=40*um, pixel_size_y=40*um, z= 5, prop_method='DI')
-    field_at_aperture, aperture_size = solver.aperture_source(a=60, b=60, geometry='regular_polygon', poly_rotation=55,\
+    solver = DiffractionSolver(p=10, lbd=650*nm, pixel_size_x=40*um, pixel_size_y=40*um, z=100*cm, prop_method='RS')
+    field_at_aperture, aperture_size = solver.aperture_source(a=60, b=60, geometry='circ_aperture', poly_rotation=55,\
                                                poly_n_side=3, text_to_draw='A Test text', text_font_size=50 , poly_bound_circle=[None, None, 100] )
     
     
@@ -509,10 +611,15 @@ if __name__ == "__main__":
         diff_pattern = solver.angular_spectrum_rayleigh_sommerfield(aperture_field=field_at_aperture)
         print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx )
             
-    ### Using the Direct Integration method on the Rayleigh-Sommerfeld expression
-    elif solver.prop_method == 'DI':
-        diff_pattern = solver.direct_integration_rayleigh_sommerfield(aperture_field=field_at_aperture)
+    ### Using the Direct Integration method on the Rayleigh-Sommerfeld expression calculated through the Fourier Transform
+    elif solver.prop_method == 'DI_FT':
+        diff_pattern = solver.direct_integration_rayleigh_sommerfield_with_FT(aperture_field=field_at_aperture)
         print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx)
+    
+    # ### Using the Direct Integration method on the Rayleigh-Sommerfeld expression calculated through convolution
+    # elif solver.prop_method == 'DI':
+    #     diff_pattern = solver.direct_integration_rayleigh_sommerfield(aperture_field=field_at_aperture)
+    #     print((aperture_size*solver.dx**2)*(solver.lbd*solver.z)**-1, aperture_size*solver.dx)
 
     plt.imshow(solver.intensity(diff_pattern))
     plt.show()
